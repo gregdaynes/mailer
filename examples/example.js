@@ -1,7 +1,18 @@
 import Path from 'node:path'
 import Fastify from "fastify"
 
-const fastify = Fastify({ logger: { level: 'debug' } })
+const fastify = Fastify({
+  logger: {
+    level: 'debug',
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname',
+      },
+    },
+  }
+})
 
 const opts = {
   mailerDataPath: ':memory:'
