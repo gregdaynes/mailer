@@ -19,6 +19,8 @@
     "neostandard": "^0.12.0"
   },
   "dependencies": {
+    "@databases/split-sql-query": "^1.0.4",
+    "@databases/sqlite-sync": "^3.0.0",
     "fastify-plugin": "^5.0.1"
   }
 }

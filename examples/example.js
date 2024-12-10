@@ -4,8 +4,9 @@ import Fastify from "fastify"
 const fastify = Fastify({ logger: { level: 'debug' } })
 
 const opts = {
-
+  mailerDataPath: ':memory:'
 }
+
 fastify.register(import(Path.join(import.meta.dirname, '..', 'index.js'), opts))
 
 fastify.get('/', async (request, reply) => {
