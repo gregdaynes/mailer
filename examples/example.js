@@ -15,15 +15,19 @@ const fastify = Fastify({
 })
 
 const opts = {
-  mailerDataPath: ':memory:'
+  //mailerDataPath: './db.sqlite3'
 }
 
-fastify.register(import(Path.join(import.meta.dirname, '..', 'index.js'), opts))
+fastify.register(import(Path.join(import.meta.dirname, '..', 'index.js')), opts)
+
+fastify.addHook('onRequest', async (request, reply) => {
+  request.notify = fastify.mailer(request)
+})
 
 fastify.get('/', async (request, reply) => {
   try {
-    request.mailer({
-      nonce: 'abc123',
+    const [success, { message, nonce }] = request.notify({
+      nonce: 'abc123' + new Date(),
       to: 'alice@example.com',
       from: 'bob@example.com',
       subject: 'Example notification',
@@ -32,6 +36,19 @@ fastify.get('/', async (request, reply) => {
         name: 'Alice'
       },
     })
+
+    request.notify({
+      nonce: 'abc456' + new Date(),
+      to: 'bob@example.com',
+      from: 'alice@example.com',
+      subject: 'Example notification',
+      template: 'Hey ${name}!',
+      data: {
+        name: 'Bob'
+      },
+    })
+
+    fastify.log.info({ success, nonce }, message)
   } catch (err) {
     request.log.error(err)
     return reply.status(400).send('Error')
