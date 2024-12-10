@@ -15,10 +15,20 @@ const fastify = Fastify({
 })
 
 const opts = {
-  //mailerDataPath: './db.sqlite3'
+  mailerDataPath: ':memory:'
 }
 
-fastify.register(import(Path.join(import.meta.dirname, '..', 'index.js')), opts)
+fastify.register(import(Path.join(import.meta.dirname, '..', 'index.js')), {
+  ...opts,
+  transport: {
+    host: process.env.MAILER_TRANSPORT_HOST,
+    port: process.env.MAILER_TRANSPORT_PORT,
+    auth: {
+      user: process.env.MAILER_TRANSPORT_USER,
+      pass: process.env.MAILER_TRANSPORT_PASS
+    }
+  }
+})
 
 fastify.addHook('onRequest', async (request, reply) => {
   request.notify = fastify.mailer(request)
@@ -27,24 +37,14 @@ fastify.addHook('onRequest', async (request, reply) => {
 fastify.get('/', async (request, reply) => {
   try {
     const [success, { message, nonce }] = request.notify({
-      nonce: 'abc123' + new Date(),
+      nonce: 'abc123' + request.id,
       to: 'alice@example.com',
       from: 'bob@example.com',
+      fromName: "Bob",
       subject: 'Example notification',
       template: 'Hi, ${name}!',
       data: {
         name: 'Alice'
-      },
-    })
-
-    request.notify({
-      nonce: 'abc456' + new Date(),
-      to: 'bob@example.com',
-      from: 'alice@example.com',
-      subject: 'Example notification',
-      template: 'Hey ${name}!',
-      data: {
-        name: 'Bob'
       },
     })
 

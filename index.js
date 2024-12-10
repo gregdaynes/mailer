@@ -3,11 +3,26 @@ import Ajv from 'ajv'
 import connect, { sql } from '@databases/sqlite-sync'
 import splitQuery from '@databases/split-sql-query'
 import migrations from './migrations.js'
-import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events';
+import nodemailer from 'nodemailer'
+import hyperId from 'hyperid'
+
+function debounce() {
+  let timer;
+
+  return function (func, time = 100) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(func, time);
+  }
+}
+
+const generateId = hyperId()
 
 EventEmitter.captureRejections = true;
 const EventBus = new EventEmitter();
+
+const createdEvent = debounce()
+const preparedEvent = debounce()
 
 const ajv = new Ajv({
   removeAdditional: 'all',
@@ -29,6 +44,9 @@ const schema = {
     from: {
       type: 'string',
       format: 'email',
+    },
+    fromName: {
+      type: 'string',
     },
     subject: {
       type: 'string',
@@ -52,9 +70,50 @@ const schema = {
   ]
 }
 
+const transportSchema = {
+  $id: 'mailer:transport',
+  type: 'object',
+  properties: {
+    host: {
+      type: 'string',
+    },
+    port: {
+      type: 'string',
+    },
+    auth: {
+      type: 'object',
+      properties: {
+        user: {
+          type: 'string'
+        },
+        pass: {
+          type: 'string'
+        }
+      },
+      required: ['user', 'pass']
+    }
+  },
+  requried: ['host', 'port']
+}
+
 export default fp(function async (fastify, opts) {
   const db = connect(opts?.mailerDataPath || ':memory:');
+  if (opts.mailerDataPath && opts.mailerDataPath !== ':memory:') {
+    db.query(sql`PRAGMA journal_mode = WAL`)
+    db.query(sql`PRAGMA synchronous = OFF`)
+    db.query(sql`PRAGMA page_size = 65536`)
+  }
+
   runMigrations(db)
+
+  const validate = ajv.compile(transportSchema)
+  const valid = validate(opts.transport)
+  if (!valid) {
+    fastify.log.error({ errors: validate.errors })
+    throw new Error('Validation error', { cause: validate.errors[0] })
+  }
+
+  const mailer = nodemailer.createTransport({ ...opts.transport });
 
   EventBus.on('created', async function (msg) {
     fastify.log.info({ event: 'created', msg }, 'Notification event');
@@ -63,11 +122,7 @@ export default fp(function async (fastify, opts) {
 
   EventBus.on('prepared', async function (msg) {
     fastify.log.info({ event: 'prepared', msg }, 'Notification event');
-    handlePrepared(db)
-  });
-
-  EventBus.on('sent', async function (msg) {
-    fastify.log.info({ event: 'sent', msg }, 'Notification event');
+    handlePrepared(db, mailer)
   });
 
   EventBus.on('error', function (msg) {
@@ -105,7 +160,7 @@ function notify (request, db, args) {
 
   request.log.debug(args, 'notify() called with arguments')
 
-  const { nonce, to, from, subject, template, data } = args
+  const { nonce, to, from, fromName, subject, template, data } = args
 
   // check nonce doesn't exist in store already
   const [existingNonce] = db.query(sql`SELECT * FROM notifications WHERE nonce = ${nonce}`)
@@ -121,17 +176,17 @@ function notify (request, db, args) {
   // write to notifications table
   db.query(sql`
     INSERT INTO notifications (
-      id_notification, nonce, sender,
+      id_notification, nonce, sender, sender_name,
       recipient, subject, template,
       data, created, id_request
     ) VALUES (
-      ${randomUUID()}, ${nonce}, ${from},
+      ${generateId()}, ${nonce}, ${from}, ${fromName},
       ${to}, ${subject}, ${template},
       ${JSON.stringify(data)}, ${(new Date()).toISOString()}, ${request.id}
     )`
   )
 
-  EventBus.emit('created', { nonce })
+  createdEvent(() => EventBus.emit('created', { nonce }))
 
   return [true, {
     message: 'Notification added to queue',
@@ -140,7 +195,7 @@ function notify (request, db, args) {
 }
 
 function handleCreated (db) {
-  const notifications = db.query(sql`SELECT * FROM notifications WHERE preparing IS NULL AND prepared IS NULL AND sending IS NULL AND sent IS NULL`)
+  const notifications = db.query(sql`SELECT * FROM notifications WHERE preparing IS NULL`)
 
   if (!notifications.length) return
 
@@ -151,27 +206,37 @@ function handleCreated (db) {
     db.query(sql`UPDATE notifications SET prepared = ${(new Date()).toISOString()}, notification = ${preparedNotification} WHERE id_notification = ${notification.id_notification}`)
   }
 
-  EventBus.emit('prepared', notifications.map(n => n.nonce))
+  preparedEvent(() => EventBus.emit('prepared', notifications.map(n => n.nonce)))
 }
 
 function createNotification (template, data) {
   return template.replace(/\${(.*?)}/g, (_x,g)=> data[g]);
 }
 
-function handlePrepared(db) {
-  const notifications = db.query(sql`SELECT * FROM notifications WHERE prepared IS NOT NULL and notification IS NOT NULL AND sending IS NULL AND sent IS NULL`)
+async function handlePrepared(db, mailer) {
+  const notifications = db.query(sql`SELECT * FROM notifications WHERE prepared IS NOT NULL`)
   if (!notifications.length) return
 
   for (const notification of notifications) {
     db.query(sql`UPDATE notifications SET sending = ${(new Date()).toISOString()} WHERE id_notification = ${notification.id_notification}`)
+    let from = notification.sender_name ? `"${notification.sender_name}" <${notification.sender}%>` : notification.sender
 
-    // send the notification
-    //console.info('Sending notification', { notification: notification.notification })
-    //console.info('Notification sent')
-    const response = JSON.stringify({ status: 'ok' })
+    // send mail with defined transport object
+    const info = await mailer.sendMail({
+      from,
+      to: notification.recipient,
+      subject: notification.subject,
+      text: notification.notification
+      //html: "<h1>Hello world</h1>"
+    });
+
+    const response = JSON.stringify({
+      accepted: info.accepted,
+      rejected: info.rejected,
+      response: info.response,
+      id: info.messageId
+    })
 
     db.query(sql`UPDATE notifications SET sent = ${(new Date()).toISOString()}, response = ${response} WHERE id_notification = ${notification.id_notification}`)
-
-    EventBus.emit('sent', { nonce: notification.nonce })
   }
 }

@@ -5,6 +5,7 @@ export default sql`
     id_notification TEXT NOT NULL,
     nonce TEXT NOT NULL,
     sender TEXT NOT NULL,
+    sender_name TEXT NULL,
     recipient TEXT NOT NULL,
     subject TEXT NOT NULL,
     template TEXT NOT NULL,
@@ -27,4 +28,13 @@ export default sql`
     CONSTRAINT notification_pk
       PRIMARY KEY (id_notification)
   );
+
+  CREATE INDEX IF NOT EXISTS notifications_nonce_index
+    ON notifications (nonce);
+
+  CREATE INDEX IF NOT EXISTS notifications_preparing_index
+    ON notifications (preparing);
+
+  CREATE INDEX IF NOT EXISTS notifications_prepared_index
+    ON notifications (prepared);
 `

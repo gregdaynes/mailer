@@ -7,7 +7,7 @@
     "example": "examples"
   },
   "scripts": {
-    "dev": "node --watch examples/example.js",
+    "dev": "node --env-file=examples/.env --watch examples/example.js",
     "test": "node --test"
   },
   "keywords": [],
@@ -22,6 +22,8 @@
   "dependencies": {
     "@databases/split-sql-query": "^1.0.4",
     "@databases/sqlite-sync": "^3.0.0",
-    "fastify-plugin": "^5.0.1"
+    "fastify-plugin": "^5.0.1",
+    "hyperid": "^3.3.0",
+    "nodemailer": "^6.9.16"
   }
 }
